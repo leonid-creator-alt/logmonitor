@@ -3,23 +3,86 @@ node_modules/
 venv/
 __pycache__/
 *.pyc
+jspm_packages/
+web_modules/
 
 # Скомпилированные файлы
 *.exe
 *.dll
 *.so
+build/Release
 
 # Конфиги с секретами
 .env
+.env.*
+!.env.example
 *.local
 
 # Логи
+logs
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
 
 # IDE
 .vscode/
 .idea/
+.vscode-test
 
 # Временные файлы
 *.tmp
 *.temp
+*.pid
+*.pid.lock
+*.seed
+
+# Диагностические отчёты Node.js
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+# Покрытие кода и тесты
+coverage/
+*.lcov
+.nyc_output
+lib-cov/
+
+# Кеши различных инструментов
+.cache/
+.parcel-cache/
+.npm/
+.eslintcache
+.stylelintcache
+.fusebox/
+.dynamodb/
+.firebase/
+
+# Сборки фреймворков
+.next/
+out/
+.nuxt/
+dist/
+.vuepress/dist/
+**/.vitepress/dist
+**/.vitepress/cache
+.docusaurus/
+.svelte-kit/
+.gatsby/
+
+# TypeScript
+*.tsbuildinfo
+
+# Yarn
+.yarn-integrity
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+
+# Другое
+.tern-port
+.node_repl_history
+serverless/
