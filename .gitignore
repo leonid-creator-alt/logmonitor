@@ -1,0 +1,25 @@
+# Зависимости
+node_modules/
+venv/
+__pycache__/
+*.pyc
+
+# Скомпилированные файлы
+*.exe
+*.dll
+*.so
+
+# Конфиги с секретами
+.env
+*.local
+
+# Логи
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# Временные файлы
+*.tmp
+*.temp
