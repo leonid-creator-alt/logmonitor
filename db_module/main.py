@@ -12,7 +12,7 @@ app = FastAPI(title="LogMonitor DB Module")
 # Разрешаем CORS (чтобы Go мог обращаться к этому сервису)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],           # В продакшене ограничить!
+    allow_origins=["*"],           # потом поменять если решу что надо
     allow_methods=["*"],
     allow_headers=["*"],
 )
