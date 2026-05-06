@@ -13,7 +13,7 @@ DB_CONFIG = {
     'port': 5432,
     'database': 'logmonitor',
     'user': 'postgres',
-    'password': 'l150506'  # твой пароль
+    'password': 'l150506'  # пароль
 }
 
 def get_connection():
