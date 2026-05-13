@@ -1,121 +1,334 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
-import './App.css'
+// frontend/src/App.tsx
+import React, { useState, useEffect, useRef } from 'react';
+import { LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip, PieChart, Pie, ResponsiveContainer } from 'recharts';
+import './App.css';
 
-function App() {
-  const [count, setCount] = useState(0)
-
-  return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
-
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+// Типы данных
+interface LogEvent {
+  log_name: string;
+  timestamp: string;
+  level: string;
+  source: string;
+  event_id: string;
+  message: string;
+  is_error: boolean;
+  is_critical: boolean;
 }
 
-export default App
+type Page = 'login' | 'register' | 'twofa' | 'dashboard';
+
+function App() {
+  // Состояния страниц
+  const [page, setPage] = useState<Page>('login');
+  const [error, setError] = useState('');
+
+  // Данные пользователя
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [twoFACode, setTwoFACode] = useState('');
+  const [token, setToken] = useState<string | null>(null);
+  const [twoFARequired, setTwoFARequired] = useState(false);
+  const [qrCode, setQrCode] = useState(''); // для настройки 2FA (опционально)
+
+  // Данные логов
+  const [logs, setLogs] = useState<LogEvent[]>([]);
+  const wsRef = useRef<WebSocket | null>(null);
+
+  // Статистика для графиков
+  const [errorCounts, setErrorCounts] = useState<{ time: string; count: number }[]>([]);
+  const [levelDistribution, setLevelDistribution] = useState<{ name: string; value: number }[]>([]);
+
+  // --- Регистрация ---
+  const handleRegister = async () => {
+    setError('');
+    try {
+      const res = await fetch('http://localhost:8080/api/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        // После регистрации переходим на логин
+        setPage('login');
+        setPassword('');
+      } else {
+        setError(data.error || 'Ошибка регистрации');
+      }
+    } catch (err) {
+      setError('Сервер недоступен');
+    }
+  };
+
+  // --- Логин (первый шаг) ---
+  const handleLogin = async () => {
+    setError('');
+    try {
+      const res = await fetch('http://localhost:8080/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || 'Неверные учётные данные');
+        return;
+      }
+      if (data.require_2fa) {
+        setTwoFARequired(true);
+        setPage('twofa');
+      } else if (data.token) {
+        setToken(data.token);
+        localStorage.setItem('token', data.token);
+        setPage('dashboard');
+        connectWebSocket(data.token);
+        fetchHistory(data.token);
+      }
+    } catch (err) {
+      setError('Ошибка соединения');
+    }
+  };
+
+  // --- Подтверждение 2FA ---
+  const handleTwoFA = async () => {
+    setError('');
+    try {
+      const res = await fetch('http://localhost:8080/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password, twofa_code: twoFACode }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || 'Неверный код 2FA');
+        return;
+      }
+      if (data.token) {
+        setToken(data.token);
+        localStorage.setItem('token', data.token);
+        setPage('dashboard');
+        connectWebSocket(data.token);
+        fetchHistory(data.token);
+      }
+    } catch (err) {
+      setError('Ошибка соединения');
+    }
+  };
+
+  // --- Подключение WebSocket ---
+  const connectWebSocket = (jwtToken: string) => {
+    const ws = new WebSocket(`ws://localhost:8080/api/ws?token=${jwtToken}`);
+    wsRef.current = ws;
+
+    ws.onopen = () => console.log('WebSocket connected');
+    ws.onmessage = (event) => {
+      try {
+        const newLog: LogEvent = JSON.parse(event.data);
+        setLogs(prev => [newLog, ...prev].slice(0, 200)); // храним 200 последних
+        updateStats(newLog);
+      } catch (e) {
+        console.error('Parse error', e);
+      }
+    };
+    ws.onerror = (err) => console.error('WebSocket error', err);
+    ws.onclose = () => console.log('WebSocket closed');
+  };
+
+  // --- Обновление статистики для графиков (в реальном времени) ---
+  const updateStats = (log: LogEvent) => {
+    // Для простоты будем обновлять распределение по уровням каждые 10 событий (можно агрегировать)
+    // Но проще пересчитывать каждый раз, массив не огромный
+    const levels = logs.map(l => l.level);
+    const errorCount = logs.filter(l => l.is_error).length;
+    // Для линейного графика по времени: группировка по минутам
+    const now = new Date();
+    const minute = `${now.getHours()}:${now.getMinutes()}`;
+    setErrorCounts(prev => {
+      const existing = prev.find(p => p.time === minute);
+      if (existing) {
+        return prev.map(p => p.time === minute ? { ...p, count: p.count + (log.is_error ? 1 : 0) } : p);
+      } else {
+        return [...prev.slice(-20), { time: minute, count: log.is_error ? 1 : 0 }];
+      }
+    });
+    // Распределение по уровням
+    const levelMap = new Map<string, number>();
+    logs.forEach(l => levelMap.set(l.level, (levelMap.get(l.level) || 0) + 1));
+    setLevelDistribution(Array.from(levelMap.entries()).map(([name, value]) => ({ name, value })));
+  };
+
+  // --- Получение истории событий (графики при загрузке) ---
+  const fetchHistory = async (jwtToken: string) => {
+    try {
+      const res = await fetch('http://localhost:8080/api/events', {
+        headers: { 'Authorization': `Bearer ${jwtToken}` },
+      });
+      const data = await res.json();
+      if (data.events && data.events.length) {
+        // Заполняем начальную статистику
+        setLogs(data.events.slice(0, 200));
+        // Построим агрегаты для графиков
+        const errorsByMinute = new Map<string, number>();
+        const levelCounts = new Map<string, number>();
+        data.events.forEach((ev: LogEvent) => {
+          const minute = ev.timestamp ? new Date(ev.timestamp).toLocaleTimeString().slice(0,5) : '00:00';
+          if (ev.is_error) errorsByMinute.set(minute, (errorsByMinute.get(minute) || 0) + 1);
+          levelCounts.set(ev.level, (levelCounts.get(ev.level) || 0) + 1);
+        });
+        setErrorCounts(Array.from(errorsByMinute.entries()).map(([time, count]) => ({ time, count })).slice(-20));
+        setLevelDistribution(Array.from(levelCounts.entries()).map(([name, value]) => ({ name, value })));
+      }
+    } catch (err) {
+      console.error('History fetch error', err);
+    }
+  };
+
+  // Выход
+  const handleLogout = () => {
+    if (wsRef.current) wsRef.current.close();
+    localStorage.removeItem('token');
+    setToken(null);
+    setPage('login');
+    setLogs([]);
+    setErrorCounts([]);
+    setLevelDistribution([]);
+  };
+
+  const setup2FA = async () => {
+  if (!token) return;
+  try {
+    const res = await fetch(`http://localhost:8080/api/setup-2fa?username=${username}`, {
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    const data = await res.json();
+    if (data.qr_code) {
+      // Показать QR в модальном окне (упрощённо через alert с ссылкой)
+      alert(`Отсканируйте QR-код в Google Authenticator:\n${data.qr_code}\nСекрет: ${data.secret}`);
+      // Далее можно попросить ввести код для верификации (необязательно)
+    }
+  } catch (err) {
+    console.error(err);
+  }
+};
+
+  // Проверка сохранённого токена при загрузке приложения
+  useEffect(() => {
+    const savedToken = localStorage.getItem('token');
+    if (savedToken) {
+      setToken(savedToken);
+      setPage('dashboard');
+      connectWebSocket(savedToken);
+      fetchHistory(savedToken);
+    }
+  }, []);
+
+  // --- Рендер страниц ---
+  if (page === 'login') {
+    return (
+      <div className="container">
+        <h1>📊 LogMonitor</h1>
+        <input type="text" placeholder="Логин" value={username} onChange={e => setUsername(e.target.value)} />
+        <input type="password" placeholder="Пароль" value={password} onChange={e => setPassword(e.target.value)} onKeyPress={e => e.key === 'Enter' && handleLogin()} />
+        <button onClick={handleLogin}>Войти</button>
+        <button className="secondary" onClick={() => setPage('register')}>Регистрация</button>
+        {error && <p className="error">{error}</p>}
+        <p className="hint">Тестовый пользователь: admin / admin123</p>
+      </div>
+    );
+  }
+
+  if (page === 'register') {
+    return (
+      <div className="container">
+        <h1>📝 Регистрация</h1>
+        <input type="text" placeholder="Логин" value={username} onChange={e => setUsername(e.target.value)} />
+        <input type="password" placeholder="Пароль" value={password} onChange={e => setPassword(e.target.value)} onKeyPress={e => e.key === 'Enter' && handleRegister()} />
+        <button onClick={handleRegister}>Зарегистрироваться</button>
+        <button className="secondary" onClick={() => setPage('login')}>Назад</button>
+        {error && <p className="error">{error}</p>}
+      </div>
+    );
+  }
+
+  if (page === 'twofa') {
+    return (
+      <div className="container">
+        <h1>🔐 Двухфакторная аутентификация</h1>
+        <p>Введите код из Google Authenticator</p>
+        <input type="text" placeholder="6-значный код" value={twoFACode} onChange={e => setTwoFACode(e.target.value)} onKeyPress={e => e.key === 'Enter' && handleTwoFA()} />
+        <button onClick={handleTwoFA}>Подтвердить</button>
+        {error && <p className="error">{error}</p>}
+      </div>
+    );
+  }
+
+  // Дашборд
+  const errorCount = logs.filter(l => l.is_error).length;
+  const criticalCount = logs.filter(l => l.is_critical).length;
+
+  return (
+    <div className="dashboard">
+      <div className="header">
+        <h1>📊 LogMonitor – Дашборд логов</h1>
+        <button onClick={handleLogout}>Выйти</button>
+        <button onClick={setup2FA} className="setup-2fa">🔐 Настроить 2FA</button>
+      </div>
+
+      {/* Карточки статистики */}
+      <div className="stats">
+        <div className="stat-card">📝 Всего событий: {logs.length}</div>
+        <div className="stat-card error">❌ Ошибок: {errorCount}</div>
+        <div className="stat-card critical">⚠️ Критических: {criticalCount}</div>
+      </div>
+
+      {/* Графики */}
+      <div className="charts">
+        <div className="chart-box">
+          <h3>Ошибки по минутам</h3>
+          <ResponsiveContainer width="100%" height={200}>
+            <LineChart data={errorCounts}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="time" />
+              <YAxis />
+              <Tooltip />
+              <Line type="monotone" dataKey="count" stroke="#8884d8" />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="chart-box">
+          <h3>Распределение по уровням</h3>
+          <ResponsiveContainer width="100%" height={200}>
+            <PieChart>
+              <Pie data={levelDistribution} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={60} fill="#82ca9d" label />
+              <Tooltip />
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
+      {/* Таблица последних логов */}
+      <div className="logs-table">
+        <h3>Последние логи (в реальном времени)</h3>
+        <div className="table-wrapper">
+          <table>
+            <thead>
+              <tr><th>Уровень</th><th>Источник</th><th>Event ID</th><th>Сообщение</th> </tr>
+            </thead>
+            <tbody>
+              {logs.slice(0, 50).map((log, idx) => (
+                <tr key={idx} className={log.is_critical ? 'critical-row' : log.is_error ? 'error-row' : ''}>
+                  <td className="level">{log.level}</td>
+                  <td>{log.source}</td>
+                  <td>{log.event_id}</td>
+                  <td className="message">{log.message?.slice(0, 100)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default App;

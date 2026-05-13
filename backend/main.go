@@ -330,6 +330,38 @@ func handleSetup2FA(c *gin.Context) {
 	})
 }
 
+// handleRegister – регистрация нового пользователя
+func handleRegister(c *gin.Context) {
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := c.BindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+		return
+	}
+
+	// Проксируем вызов в DB модуль
+	result, err := callDBModule("POST", "/api/user/register", req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Registration failed"})
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
+// handleGetEvents – возвращает последние события (для истории)
+func handleGetEvents(c *gin.Context) {
+	limit := c.DefaultQuery("limit", "100")
+	result, err := callDBModule("GET", "/api/events?limit="+limit, nil)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Cannot fetch events"})
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
 // Вспомогательная функция для преобразования QR-кода в base64
 func base64QRCode(img image.Image) string {
 	var buf bytes.Buffer
@@ -378,6 +410,7 @@ func main() {
 
 	// Публичные маршруты
 	r.POST("/api/login", handleLogin)
+	r.POST("/api/register", handleRegister)
 	r.GET("/api/ws", handleWebSocket)
 	r.GET("/api/setup-2fa", handleSetup2FA)
 
@@ -388,6 +421,7 @@ func main() {
 		authorized.GET("/health", func(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"status": "ok"})
 		})
+		authorized.GET("/events", handleGetEvents)
 	}
 
 	log.Println("🚀 Go backend on http://localhost:8080")
