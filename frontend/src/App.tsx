@@ -1,4 +1,3 @@
-// frontend/src/App.tsx
 import React, { useState, useEffect, useRef } from 'react';
 import { LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip, PieChart, Pie, ResponsiveContainer } from 'recharts';
 import './App.css';
@@ -27,8 +26,6 @@ function App() {
   const [password, setPassword] = useState('');
   const [twoFACode, setTwoFACode] = useState('');
   const [token, setToken] = useState<string | null>(null);
-  const [twoFARequired, setTwoFARequired] = useState(false);
-  const [qrCode, setQrCode] = useState(''); // для настройки 2FA (опционально)
 
   // Данные логов
   const [logs, setLogs] = useState<LogEvent[]>([]);
@@ -37,6 +34,13 @@ function App() {
   // Статистика для графиков
   const [errorCounts, setErrorCounts] = useState<{ time: string; count: number }[]>([]);
   const [levelDistribution, setLevelDistribution] = useState<{ name: string; value: number }[]>([]);
+
+  // Состояния для модального окна 2FA
+  const [show2FAModal, setShow2FAModal] = useState(false);
+  const [qrCodeData, setQrCodeData] = useState('');
+  const [twoFASecret, setTwoFASecret] = useState('');
+  const [verificationCode, setVerificationCode] = useState('');
+  const [verificationError, setVerificationError] = useState('');
 
   // --- Регистрация ---
   const handleRegister = async () => {
@@ -49,7 +53,6 @@ function App() {
       });
       const data = await res.json();
       if (res.ok) {
-        // После регистрации переходим на логин
         setPage('login');
         setPassword('');
       } else {
@@ -75,7 +78,6 @@ function App() {
         return;
       }
       if (data.require_2fa) {
-        setTwoFARequired(true);
         setPage('twofa');
       } else if (data.token) {
         setToken(data.token);
@@ -124,7 +126,7 @@ function App() {
     ws.onmessage = (event) => {
       try {
         const newLog: LogEvent = JSON.parse(event.data);
-        setLogs(prev => [newLog, ...prev].slice(0, 200)); // храним 200 последних
+        setLogs(prev => [newLog, ...prev].slice(0, 200));
         updateStats(newLog);
       } catch (e) {
         console.error('Parse error', e);
@@ -134,30 +136,40 @@ function App() {
     ws.onclose = () => console.log('WebSocket closed');
   };
 
-  // --- Обновление статистики для графиков (в реальном времени) ---
   const updateStats = (log: LogEvent) => {
-    // Для простоты будем обновлять распределение по уровням каждые 10 событий (можно агрегировать)
-    // Но проще пересчитывать каждый раз, массив не огромный
-    const levels = logs.map(l => l.level);
-    const errorCount = logs.filter(l => l.is_error).length;
-    // Для линейного графика по времени: группировка по минутам
+    // линейный график ошибок по минутам
     const now = new Date();
     const minute = `${now.getHours()}:${now.getMinutes()}`;
     setErrorCounts(prev => {
-      const existing = prev.find(p => p.time === minute);
-      if (existing) {
-        return prev.map(p => p.time === minute ? { ...p, count: p.count + (log.is_error ? 1 : 0) } : p);
+      const existingIndex = prev.findIndex(p => p.time === minute);
+      if (existingIndex >= 0) {
+        const updated = [...prev];
+        updated[existingIndex] = {
+          ...updated[existingIndex],
+          count: updated[existingIndex].count + (log.is_error ? 1 : 0)
+        };
+        return updated;
       } else {
-        return [...prev.slice(-20), { time: minute, count: log.is_error ? 1 : 0 }];
+        return [...prev.slice(-19), { time: minute, count: log.is_error ? 1 : 0 }];
       }
     });
-    // Распределение по уровням
-    const levelMap = new Map<string, number>();
-    logs.forEach(l => levelMap.set(l.level, (levelMap.get(l.level) || 0) + 1));
-    setLevelDistribution(Array.from(levelMap.entries()).map(([name, value]) => ({ name, value })));
+
+    // распределение по уровням
+    setLevelDistribution(prev => {
+      const existingIndex = prev.findIndex(p => p.name === log.level);
+      if (existingIndex >= 0) {
+        const updated = [...prev];
+        updated[existingIndex] = {
+          ...updated[existingIndex],
+          value: updated[existingIndex].value + 1
+        };
+        return updated;
+      } else {
+        return [...prev, { name: log.level, value: 1 }];
+      }
+    });
   };
 
-  // --- Получение истории событий (графики при загрузке) ---
   const fetchHistory = async (jwtToken: string) => {
     try {
       const res = await fetch('http://localhost:8080/api/events', {
@@ -165,16 +177,21 @@ function App() {
       });
       const data = await res.json();
       if (data.events && data.events.length) {
-        // Заполняем начальную статистику
         setLogs(data.events.slice(0, 200));
-        // Построим агрегаты для графиков
+        
         const errorsByMinute = new Map<string, number>();
         const levelCounts = new Map<string, number>();
+        
         data.events.forEach((ev: LogEvent) => {
-          const minute = ev.timestamp ? new Date(ev.timestamp).toLocaleTimeString().slice(0,5) : '00:00';
-          if (ev.is_error) errorsByMinute.set(minute, (errorsByMinute.get(minute) || 0) + 1);
+          if (ev.timestamp) {
+            const minute = new Date(ev.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            if (ev.is_error) {
+              errorsByMinute.set(minute, (errorsByMinute.get(minute) || 0) + 1);
+            }
+          }
           levelCounts.set(ev.level, (levelCounts.get(ev.level) || 0) + 1);
         });
+        
         setErrorCounts(Array.from(errorsByMinute.entries()).map(([time, count]) => ({ time, count })).slice(-20));
         setLevelDistribution(Array.from(levelCounts.entries()).map(([name, value]) => ({ name, value })));
       }
@@ -195,21 +212,47 @@ function App() {
   };
 
   const setup2FA = async () => {
-  if (!token) return;
-  try {
-    const res = await fetch(`http://localhost:8080/api/setup-2fa?username=${username}`, {
-      headers: { 'Authorization': `Bearer ${token}` },
-    });
-    const data = await res.json();
-    if (data.qr_code) {
-      // Показать QR в модальном окне (упрощённо через alert с ссылкой)
-      alert(`Отсканируйте QR-код в Google Authenticator:\n${data.qr_code}\nСекрет: ${data.secret}`);
-      // Далее можно попросить ввести код для верификации (необязательно)
+    if (!token) return;
+    try {
+      const res = await fetch(`http://localhost:8080/api/setup-2fa?username=${username}`, {
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (data.qr_code && data.secret) {
+        setQrCodeData(data.qr_code);
+        setTwoFASecret(data.secret);
+        setShow2FAModal(true);
+      } else {
+        alert('Ошибка генерации 2FA');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Ошибка соединения');
     }
-  } catch (err) {
-    console.error(err);
-  }
-};
+  };
+
+  const verify2FA = async () => {
+    setVerificationError('');
+    try {
+      const res = await fetch('http://localhost:8080/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password, twofa_code: verificationCode }),
+      });
+      const data = await res.json();
+      if (data.token) {
+        setShow2FAModal(false);
+        alert('2FA успешно настроена! При следующем входе потребуется код.');
+        localStorage.setItem('token', data.token);
+        setToken(data.token);
+        setVerificationCode('');
+      } else {
+        setVerificationError('Неверный код. Попробуйте ещё раз.');
+      }
+    } catch (err) {
+      setVerificationError('Ошибка проверки кода');
+    }
+  };
 
   // Проверка сохранённого токена при загрузке приложения
   useEffect(() => {
@@ -312,7 +355,12 @@ function App() {
         <div className="table-wrapper">
           <table>
             <thead>
-              <tr><th>Уровень</th><th>Источник</th><th>Event ID</th><th>Сообщение</th> </tr>
+              <tr>
+                <th>Уровень</th>
+                <th>Источник</th>
+                <th>Event ID</th>
+                <th>Сообщение</th>
+              </tr>
             </thead>
             <tbody>
               {logs.slice(0, 50).map((log, idx) => (
@@ -327,6 +375,29 @@ function App() {
           </table>
         </div>
       </div>
+
+      {/* Модальное окно для настройки 2FA */}
+      {show2FAModal && (
+        <div className="modal-overlay" onClick={() => setShow2FAModal(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <h3>🔐 Настройка двухфакторной аутентификации</h3>
+            <p>Отсканируйте QR-код в приложении Google Authenticator:</p>
+            <img src={qrCodeData} alt="QR Code" style={{ width: '200px', height: '200px', margin: '10px auto', display: 'block' }} />
+            <p>Или введите секрет вручную: <code>{twoFASecret}</code></p>
+            <p>После сканирования введите полученный 6-значный код:</p>
+            <input
+              type="text"
+              placeholder="6-значный код"
+              value={verificationCode}
+              onChange={(e) => setVerificationCode(e.target.value)}
+              maxLength={6}
+            />
+            <button onClick={verify2FA}>Подтвердить</button>
+            {verificationError && <p className="error">{verificationError}</p>}
+            <button className="secondary" onClick={() => setShow2FAModal(false)}>Закрыть</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
